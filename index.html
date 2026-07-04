@@ -65,10 +65,16 @@ function mkContract(prices) {
   const payout = Math.round(qty * prices[g.id] * rnd(1.35, 1.85));
   return { good: g.id, qty, payout, ttl: rint(10, 18), maxttl: 18 };
 }
+function seedHist(g) {
+  let v = g.base; const arr = [v];
+  for (let i = 0; i < 27; i++) { v = stepPrice(g, v); arr.push(v); }
+  return arr;
+}
 function initState() {
-  const prices = {}; GOODS.forEach((g) => (prices[g.id] = g.base));
+  const hist = {}; GOODS.forEach((g) => (hist[g.id] = seedHist(g)));
+  const prices = {}; GOODS.forEach((g) => (prices[g.id] = hist[g.id][hist[g.id].length - 1]));
   return {
-    tick: 0, cash: 900, prices, trend: { grain: 0, textile: 0, compos: 0 },
+    tick: 0, cash: 900, prices, hist, trend: { grain: 0, textile: 0, compos: 0 },
     inv: { grain: 0, textile: 0, compos: 0 }, cap: 60, lot: 5,
     trucks: [{ id: 1, name: "Van-01", cap: 12, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }],
     vanN: 1,
@@ -78,15 +84,15 @@ function initState() {
 }
 function stepPrice(g, cur) { return clamp(cur + (g.base - cur) * 0.08 + (Math.random() * 2 - 1) * g.vol, g.base * 0.4, g.base * 2.4); }
 function logicTick(p) {
-  const prices = {}, trend = {};
-  GOODS.forEach((g) => { const nx = stepPrice(g, p.prices[g.id]); prices[g.id] = nx; trend[g.id] = nx > p.prices[g.id] + 0.05 ? 1 : nx < p.prices[g.id] - 0.05 ? -1 : 0; });
+  const prices = {}, trend = {}, hist = {};
+  GOODS.forEach((g) => { const nx = stepPrice(g, p.prices[g.id]); prices[g.id] = nx; trend[g.id] = nx > p.prices[g.id] + 0.05 ? 1 : nx < p.prices[g.id] - 0.05 ? -1 : 0; hist[g.id] = [...((p.hist && p.hist[g.id]) || [g.base]), nx].slice(-56); });
   let missed = p.missed;
   const clients = p.clients.map((c) => {
     if (c.contract) { const ttl = c.contract.ttl - 1; if (ttl <= 0) { missed += 1; return { ...c, contract: null }; } return { ...c, contract: { ...c.contract, ttl } }; }
     if (Math.random() < 0.16) return { ...c, contract: mkContract(prices) };
     return c;
   });
-  return { ...p, tick: p.tick + 1, prices, trend, clients, missed };
+  return { ...p, tick: p.tick + 1, prices, trend, hist, clients, missed };
 }
 
 /* ---------- sauvegarde (localStorage) ---------- */
@@ -104,12 +110,40 @@ function revive(g) {
   return { ...initState(), ...g, cash, delivered, trucks };
 }
 
+function Spark({ data, color, w = 54, h = 20, stretch = false }) {
+  const min = Math.min(...data), max = Math.max(...data), rng = (max - min) || 1;
+  const pts = data.map((v, i) => (i / (data.length - 1) * w).toFixed(1) + "," + (h - (v - min) / rng * h).toFixed(1)).join(" ");
+  return (<svg width={stretch ? "100%" : w} height={h} viewBox={"0 0 " + w + " " + h} preserveAspectRatio={stretch ? "none" : "xMidYMid meet"} style={{ display: "block", overflow: "visible" }}><polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" opacity="0.9" /></svg>);
+}
+
+function PriceChart({ data, color, gid }) {
+  const W = 320, H = 120, pad = 9;
+  const d = data.slice(-44);
+  const min = Math.min(...d), max = Math.max(...d), rng = (max - min) || 1;
+  const X = (i) => pad + i / (d.length - 1) * (W - 2 * pad);
+  const Y = (v) => pad + (1 - (v - min) / rng) * (H - 2 * pad);
+  const line = d.map((v, i) => X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(" ");
+  const lastX = X(d.length - 1), lastY = Y(d[d.length - 1]);
+  return (
+    <svg viewBox={"0 0 " + W + " " + H} width="100%" style={{ display: "block" }}>
+      <defs><linearGradient id={"grad-" + gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.3" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+      {[0.25, 0.5, 0.75].map((f) => { const y = pad + f * (H - 2 * pad); return <line key={f} x1={pad} x2={W - pad} y1={y} y2={y} stroke="#26303c" strokeWidth="1" strokeDasharray="2 4" />; })}
+      <polygon points={X(0).toFixed(1) + "," + (H - pad) + " " + line + " " + lastX.toFixed(1) + "," + (H - pad)} fill={"url(#grad-" + gid + ")"} />
+      <polyline points={line} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={lastX} cy={lastY} r="3.6" fill={color} />
+      <text x={W - pad} y={pad + 9} textAnchor="end" fontSize="9" fill="#8b97a6" fontFamily="ui-monospace,monospace">{fmtE(max)}</text>
+      <text x={W - pad} y={H - pad - 2} textAnchor="end" fontSize="9" fill="#8b97a6" fontFamily="ui-monospace,monospace">{fmtE(min)}</text>
+    </svg>
+  );
+}
+
 function FluxTendu() {
   const [g, setG] = useState(() => { const s = loadSave(); return s && s.g ? revive(s.g) : initState(); });
   const [speed, setSpeed] = useState(1);
   const [sheet, setSheet] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [saved, setSaved] = useState(false);
+  const [selGood, setSelGood] = useState("compos");
 
   const kin = useRef(new Map());
   const els = useRef(new Map());
@@ -259,6 +293,19 @@ function FluxTendu() {
   .send{width:100%;padding:14px;border-radius:11px;border:1px solid var(--amber);background:var(--amber);color:#20160a;font-weight:800;font-size:15px;cursor:pointer}
   .send:disabled{background:transparent;color:var(--mut);border-color:var(--line);cursor:not-allowed}
   .empty{font-size:13px;color:var(--mut);text-align:center;padding:18px 0}
+  .fx-ticker{display:flex;gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .tk{flex:1;min-width:0;background:#101820;padding:7px 12px 8px;cursor:pointer;transition:background .15s}
+  .tk:hover{background:#141d27}
+  .tk-top{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+  .tk-dot{width:8px;height:8px;border-radius:2px;flex:none}
+  .tk-code{font-size:9px;letter-spacing:.1em;color:var(--mut);font-weight:700}
+  .tk-px{margin-left:auto;font-size:12px;font-weight:700}
+  .chartbox{background:#101820;border:1px solid var(--line);border-radius:11px;padding:11px 12px 8px;margin-bottom:12px}
+  .chart-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .chart-name{font-size:13px;font-weight:700}
+  .chart-px{margin-left:auto;font-size:15px;font-weight:800}
+  .chart-chg{font-size:12px;font-weight:800}
+  .grow.sel{background:rgba(242,169,52,.07);border-radius:8px}
   @media (prefers-reduced-motion:reduce){.pulse{animation:none}.toast{animation-duration:.01s}}
   `;
 
@@ -281,6 +328,22 @@ function FluxTendu() {
         <span>Livrés <b>{g.delivered}</b></span>
         <span>Ratés <b style={{ color: g.missed ? "var(--loss)" : "var(--ink)" }}>{g.missed}</b></span>
         <span className="fx-save" style={{ opacity: saved ? 1 : 0, color: "var(--gain)" }}>✓ sauvegardé</span>
+      </div>
+
+      <div className="fx-ticker">
+        {GOODS.map((x) => {
+          const tr = g.trend[x.id];
+          return (
+            <div key={x.id} className="tk" onClick={() => { setSelGood(x.id); setSheet("market"); }}>
+              <div className="tk-top">
+                <span className="tk-dot" style={{ background: x.c }} />
+                <span className="tk-code">{x.code}</span>
+                <span className="tk-px mono" style={{ color: tr > 0 ? "var(--gain)" : tr < 0 ? "var(--loss)" : "var(--ink)" }}>{tr > 0 ? "▲" : tr < 0 ? "▼" : ""}{fmtE(g.prices[x.id])}</span>
+              </div>
+              <Spark data={g.hist[x.id].slice(-22)} color={x.c} w={200} h={22} stretch />
+            </div>
+          );
+        })}
       </div>
 
       <div className="fx-scene">
@@ -351,15 +414,30 @@ function FluxTendu() {
         {sheet === "market" && (
           <div className="fx-sheet">
             <div className="fx-sheet-h"><span className="t">Marché de gros</span><button className="x" onClick={() => setSheet(null)}>✕</button></div>
+            {(() => {
+              const sg = GC(selGood), d = g.hist[selGood], last = d[d.length - 1], win = d.slice(-44), chg = win[0] ? (last - win[0]) / win[0] * 100 : 0;
+              return (
+                <div className="chartbox">
+                  <div className="chart-h">
+                    <span className="dot" style={{ background: sg.c }} />
+                    <span className="chart-name">{sg.name}</span>
+                    <span className="chart-px mono">{fmtE(last)}</span>
+                    <span className="chart-chg mono" style={{ color: chg >= 0 ? "var(--gain)" : "var(--loss)" }}>{chg >= 0 ? "+" : ""}{chg.toFixed(1)}%</span>
+                  </div>
+                  <PriceChart data={d} color={sg.c} gid={selGood} />
+                </div>
+              );
+            })()}
             <div className="lots">{[1, 5, 10].map((n) => <button key={n} className={g.lot === n ? "on" : ""} onClick={() => setG((p) => ({ ...p, lot: n }))}>×{n}</button>)}</div>
             {GOODS.map((x) => {
               const pr = g.prices[x.id], tr = g.trend[x.id], sp = g.cap - used;
               return (
-                <div className="grow" key={x.id}>
+                <div className={"grow" + (selGood === x.id ? " sel" : "")} key={x.id} onClick={() => setSelGood(x.id)}>
                   <span className="dot" style={{ background: x.c }} />
                   <div className="nm"><div className="n">{x.name}</div><div className="s">{x.code} · stock {g.inv[x.id]}</div></div>
+                  <Spark data={g.hist[x.id].slice(-18)} color={x.c} w={46} h={18} />
                   <div className="px mono" style={{ color: tr > 0 ? "var(--gain)" : tr < 0 ? "var(--loss)" : "var(--ink)" }}>{tr > 0 ? "▲" : tr < 0 ? "▼" : ""}{fmtE(pr)}</div>
-                  <div className="tb"><button className="b" disabled={g.cash < pr || sp < 1} onClick={() => buy(x.id)}>＋</button><button className="s" disabled={g.inv[x.id] < 1} onClick={() => sell(x.id)}>－</button></div>
+                  <div className="tb"><button className="b" disabled={g.cash < pr || sp < 1} onClick={(e) => { e.stopPropagation(); buy(x.id); }}>＋</button><button className="s" disabled={g.inv[x.id] < 1} onClick={(e) => { e.stopPropagation(); sell(x.id); }}>－</button></div>
                 </div>
               );
             })}
