@@ -209,6 +209,94 @@ function ClientView({ c, lvl, ct, onClick }) {
   );
 }
 
+const SKYLINE = [
+  { x: 6, w: 20, h: 24 }, { x: 30, w: 15, h: 16 }, { x: 48, w: 22, h: 30 }, { x: 74, w: 16, h: 20 },
+  { x: 94, w: 24, h: 26 }, { x: 122, w: 15, h: 15 }, { x: 152, w: 20, h: 28 }, { x: 176, w: 16, h: 19 },
+  { x: 196, w: 22, h: 24 }, { x: 222, w: 15, h: 14 }, { x: 250, w: 20, h: 30 }, { x: 274, w: 16, h: 20 },
+  { x: 298, w: 15, h: 16 }, { x: 318, w: 22, h: 27 }, { x: 344, w: 16, h: 22 },
+];
+const RING = "M 52 40 H 342 A 12 12 0 0 1 354 52 V 254 A 12 12 0 0 1 342 266 H 52 A 12 12 0 0 1 40 254 V 52 A 12 12 0 0 1 52 40 Z";
+
+function Tree({ x, y, s = 1, dur = 3.6, delay = 0 }) {
+  const piv = "0 " + (-2 * s);
+  return (
+    <g transform={"translate(" + x + " " + y + ")"}>
+      <ellipse cx="0" cy={0.6 * s} rx={5 * s} ry={1.6 * s} fill="#0b110f" opacity="0.5" />
+      <rect x={-1.3 * s} y={-2 * s} width={2.6 * s} height={7 * s} rx="1" fill="#3a2c1e" />
+      <g>
+        <animateTransform attributeName="transform" type="rotate" values={"-1.8 " + piv + ";1.8 " + piv + ";-1.8 " + piv} keyTimes="0;0.5;1" dur={dur + "s"} begin={delay + "s"} repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" />
+        <circle cx="0" cy={-7 * s} r={5.4 * s} fill="#2d5035" />
+        <circle cx={-3 * s} cy={-5 * s} r={3.8 * s} fill="#335c3b" />
+        <circle cx={3 * s} cy={-5.4 * s} r={3.4 * s} fill="#3a6a43" />
+        <circle cx={-1 * s} cy={-9 * s} r={3.2 * s} fill="#437049" opacity="0.92" />
+      </g>
+    </g>
+  );
+}
+
+function Car({ dur, begin, color }) {
+  return (
+    <g>
+      <animateMotion dur={dur + "s"} begin={begin + "s"} repeatCount="indefinite" rotate="auto"><mpath xlinkHref="#ring" /></animateMotion>
+      <rect x="-4" y="-2.2" width="8" height="4.4" rx="1.3" fill={color} />
+      <rect x="-3.6" y="-2.2" width="2.2" height="4.4" rx="1.1" fill="#0e1316" opacity="0.3" />
+      <circle cx="3.4" cy="0" r="0.9" fill="#f6e6b4" opacity="0.85" />
+    </g>
+  );
+}
+
+const Scenery = React.memo(function Scenery() {
+  return (
+    <g>
+      <defs>
+        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#21312f" /><stop offset="52%" stopColor="#17231f" /><stop offset="100%" stopColor="#101715" />
+        </linearGradient>
+        <radialGradient id="lampGlow"><stop offset="0%" stopColor="#f2a934" stopOpacity="0.3" /><stop offset="100%" stopColor="#f2a934" stopOpacity="0" /></radialGradient>
+      </defs>
+      <rect x="0" y="0" width="372" height="300" fill="url(#skyGrad)" />
+      {[64, 124, 188, 250].map((yy) => <rect key={yy} x="0" y={yy} width="372" height="20" fill="#ffffff" opacity="0.012" />)}
+
+      {SKYLINE.map((b, i) => (
+        <g key={i}>
+          <rect x={b.x} y={38 - b.h} width={b.w} height={b.h} rx="1.5" fill="#141c24" stroke="#1b232c" strokeWidth="0.5" />
+          {[[0, 0], [0, 1], [1, 0], [1, 1]].map(([r, cc], k) => <rect key={k} x={b.x + 3 + cc * (b.w - 8)} y={38 - b.h + 5 + r * 7} width="2.5" height="3" fill="#f2a934" opacity={(i + k) % 3 === 0 ? 0.5 : 0.14} />)}
+        </g>
+      ))}
+
+      <ellipse cx="202" cy="240" rx="82" ry="22" fill="#1a2a20" opacity="0.75" />
+      <ellipse cx="340" cy="150" rx="16" ry="72" fill="#1a2a20" opacity="0.7" />
+
+      <path id="ring" d={RING} fill="none" stroke="#1f272e" strokeWidth="9" />
+      <path d={RING} fill="none" stroke="#3a4655" strokeWidth="1" strokeDasharray="4 8" opacity="0.5" />
+
+      <Car dur={26} begin={0} color="#c56f6f" />
+      <Car dur={26} begin={-5.2} color="#6f96c5" />
+      <Car dur={26} begin={-10.4} color="#c9b46f" />
+      <Car dur={26} begin={-15.6} color="#7cb98a" />
+      <Car dur={26} begin={-20.8} color="#b98ac9" />
+      <Car dur={34} begin={-8} color="#9aa6b2" />
+
+      <Tree x={126} y={95} s={0.8} dur={3.9} delay={0.9} />
+      <Tree x={150} y={236} s={0.92} dur={3.5} delay={0.2} />
+      <Tree x={176} y={244} s={0.8} dur={4.2} delay={1.3} />
+      <Tree x={230} y={238} s={0.9} dur={3.6} delay={0.5} />
+      <Tree x={256} y={230} s={0.84} dur={4.0} delay={1.0} />
+      <Tree x={340} y={98} s={0.82} dur={3.8} delay={0.7} />
+      <Tree x={344} y={150} s={0.9} dur={4.2} delay={0.1} />
+      <Tree x={338} y={206} s={0.82} dur={3.5} delay={1.2} />
+
+      {[[44, 150], [120, 150], [214, 116], [298, 92], [300, 250]].map((p, i) => (
+        <g key={i}><circle cx={p[0]} cy={p[1]} r="20" fill="url(#lampGlow)" /><circle cx={p[0]} cy={p[1]} r="1.4" fill="#f2c877" /></g>
+      ))}
+
+      <ellipse rx="64" ry="30" cx="0" cy="70" fill="#000000" opacity="0.05"><animateTransform attributeName="transform" type="translate" values="-90 0;462 0" dur="72s" repeatCount="indefinite" /></ellipse>
+      <ellipse rx="52" ry="26" cx="0" cy="180" fill="#000000" opacity="0.045"><animateTransform attributeName="transform" type="translate" values="-70 0;462 0" dur="95s" begin="-30s" repeatCount="indefinite" /></ellipse>
+      <ellipse rx="72" ry="34" cx="0" cy="255" fill="#000000" opacity="0.04"><animateTransform attributeName="transform" type="translate" values="-100 0;472 0" dur="120s" begin="-60s" repeatCount="indefinite" /></ellipse>
+    </g>
+  );
+});
+
 function FluxTendu() {
   const [g, setG] = useState(() => { const s = loadSave(); return s && s.g ? revive(s.g) : initState(); });
   const [speed, setSpeed] = useState(1);
@@ -322,7 +410,7 @@ function FluxTendu() {
   .fx-sub{display:flex;align-items:center;gap:16px;padding:7px 16px;background:#0d1218;border-bottom:1px solid var(--line);font-size:10px;color:var(--mut)}
   .fx-sub b{color:var(--ink)}
   .fx-save{margin-left:auto;font-size:9px;letter-spacing:.1em;text-transform:uppercase;transition:opacity .3s}
-  .fx-scene{position:relative;background:radial-gradient(120% 90% at 30% 20%,#16202b,#0e141b)}
+  .fx-scene{position:relative;background:#111917}
   .fx-scene svg{display:block;width:100%;height:auto}
   .bld{cursor:pointer;transition:filter .15s}
   .bld:hover{filter:brightness(1.18)}
@@ -427,6 +515,7 @@ function FluxTendu() {
 
       <div className="fx-scene">
         <svg viewBox="0 0 372 300">
+          <Scenery />
           {CLIENTS.map((c) => (<polyline key={c.id} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--road)" strokeWidth="13" strokeLinecap="round" strokeLinejoin="round" />))}
           {CLIENTS.map((c) => (<polyline key={c.id + "d"} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="#3a4655" strokeWidth="1.4" strokeDasharray="5 7" strokeLinecap="round" opacity=".55" />))}
           <line x1="82" y1="128" x2="82" y2="86" stroke="var(--road)" strokeWidth="11" strokeLinecap="round" />
