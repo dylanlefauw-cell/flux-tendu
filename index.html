@@ -90,7 +90,7 @@ function initState() {
     trucks: [{ id: 1, name: "Van-01", cap: VAN_CAP, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }],
     vanN: 1,
     clients: [{ id: "c1", lvl: 1, contract: mkContract(prices, 1) }, { id: "c2", lvl: 1, contract: null }, { id: "c3", lvl: 1, contract: mkContract(prices, 1) }],
-    delivered: 0, missed: 0, upVan: 650,
+    delivered: 0, missed: 0, upVan: 650, upHeavy: 1400, heavyN: 0,
   };
 }
 function stepPrice(g, cur) { return clamp(cur + (g.base - cur) * 0.08 + (Math.random() * 2 - 1) * g.vol, g.base * 0.4, g.base * 2.4); }
@@ -152,14 +152,16 @@ function PriceChart({ data, color, gid }) {
   );
 }
 
-function WarehouseView({ lvl, used, cap, onClick }) {
+function WarehouseView({ lvl, used, cap, inv, onClick }) {
   const W = [62, 66, 70, 74, 78][lvl - 1], H = [50, 54, 58, 62, 66][lvl - 1];
   const x = 48, y = 176 - H, cx = x + W / 2, roofH = 12;
   const doors = [1, 2, 2, 3, 3][lvl - 1], dW = 12, dGap = 6;
   const totalD = doors * dW + (doors - 1) * dGap, dStart = cx - totalD / 2;
   const maxCrates = [8, 10, 12, 14, 16][lvl - 1];
-  const crateN = Math.round(used / cap * maxCrates);
-  const yTop = y + roofH + 3, rowsFit = Math.max(1, Math.floor((150 - yTop) / 10)), showN = Math.min(crateN, rowsFit * 5);
+  const yTop = y + roofH + 3, rowsFit = Math.max(1, Math.floor((150 - yTop) / 10)), cap5 = rowsFit * 5;
+  const crateCols = [];
+  GOODS.forEach((gg) => { const n = Math.round((inv[gg.id] || 0) / cap * maxCrates); for (let k = 0; k < n; k++) crateCols.push(gg.c); });
+  const showCols = crateCols.slice(0, cap5);
   return (
     <g className="bld" onClick={onClick}>
       {lvl >= 3 && <g><rect x={x - 15} y={y + H - 32} width="12" height="32" rx="6" fill="#222d38" stroke="#33424f" /><ellipse cx={x - 9} cy={y + H - 32} rx="6" ry="2.5" fill="#2b3746" /></g>}
@@ -169,7 +171,7 @@ function WarehouseView({ lvl, used, cap, onClick }) {
       {lvl >= 3 && <rect x={x + 17} y={y - 5} width="7" height="6" rx="1" fill="#2b3746" stroke="#3a4655" strokeWidth=".5" />}
       {lvl >= 4 && [0, 1, 2].map((i) => <rect key={i} x={x + W - 11 - i * 9} y={y - 6} width="7" height="5" rx="1" fill="#2f4a6b" stroke="#3f6089" strokeWidth=".5" />)}
       {lvl >= 5 && <g stroke="#6b7a8c" strokeWidth="1.5" fill="none"><line x1={cx} y1={y - 5} x2={cx} y2={y - 20} /><line x1={cx} y1={y - 20} x2={cx + 15} y2={y - 20} /><line x1={cx + 15} y1={y - 20} x2={cx + 15} y2={y - 13} /></g>}
-      {Array.from({ length: showN }).map((_, i) => { const col = i % 5, row = Math.floor(i / 5); return <rect key={i} x={x + 7 + col * 10} y={yTop + row * 10} width="8" height="8" rx="1.5" fill="var(--amber)" opacity=".9" />; })}
+      {showCols.map((col, i) => { const c = i % 5, r = Math.floor(i / 5); return <rect key={i} x={x + 7 + c * 10} y={yTop + r * 10} width="8" height="8" rx="1.5" fill={col} opacity=".95" />; })}
       {Array.from({ length: doors }).map((_, i) => <rect key={i} x={dStart + i * (dW + dGap)} y={152} width={dW} height={24} rx="2" fill="#12181f" stroke="#33424f" strokeWidth="1" />)}
       <g><rect x={x + W - 20} y={y + 2} width="18" height="10" rx="3" fill="#101820" stroke="#3a4655" /><text x={x + W - 11} y={y + 9.5} textAnchor="middle" fontSize="7" fontWeight="800" fill="var(--amber)">Nv{lvl}</text></g>
       <text x={cx} y={y - (lvl >= 5 ? 26 : lvl >= 2 ? 12 : 6)} textAnchor="middle" className="lbl">Entrepôt</text>
@@ -241,8 +243,8 @@ function FluxTendu() {
       k.homeX = home.x; k.homeY = home.y;
       if (t.phase !== k.phase) {
         k.phase = t.phase; k.arrived = false;
-        if (t.phase === "out") { k.pts = CROUTE[t.clientId]; k.total = polyLen(k.pts); k.dist = 0; k.payout = t.payout; }
-        else if (t.phase === "back") { k.pts = [...CROUTE[t.clientId]].reverse(); k.total = polyLen(k.pts); k.dist = 0; }
+        if (t.phase === "out") { k.pts = [[home.x, home.y], ...CROUTE[t.clientId]]; k.total = polyLen(k.pts); k.dist = 0; k.payout = t.payout; }
+        else if (t.phase === "back") { k.pts = [...[...CROUTE[t.clientId]].reverse(), [home.x, home.y]]; k.total = polyLen(k.pts); k.dist = 0; }
         else { k.x = home.x; k.y = home.y; k.pts = []; k.total = 0; k.dist = 0; }
       }
     });
@@ -294,6 +296,7 @@ function FluxTendu() {
   const upWh = () => setG((p) => { const lvl = p.whLevel; if (lvl >= WH_MAX || p.cash < WH_UP[lvl]) return p; return { ...p, cash: p.cash - WH_UP[lvl], whLevel: lvl + 1 }; });
   const upVan = () => setG((p) => { if (p.cash < p.upVan) return p; const n = p.vanN + 1; return { ...p, cash: p.cash - p.upVan, vanN: n, upVan: Math.round(p.upVan * 1.9), trucks: [...p.trucks, { id: Date.now(), name: "Van-0" + n, cap: VAN_CAP, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }] }; });
   const upClient = (cid) => setG((p) => { const c = p.clients.find((x) => x.id === cid); if (!c) return p; const lvl = c.lvl || 1; if (lvl >= CL_MAX || p.cash < CL_UP[lvl]) return p; return { ...p, cash: p.cash - CL_UP[lvl], clients: p.clients.map((x) => x.id === cid ? { ...x, lvl: lvl + 1 } : x) }; });
+  const upHeavy = () => setG((p) => { if (p.cash < p.upHeavy) return p; const n = (p.heavyN || 0) + 1; return { ...p, cash: p.cash - p.upHeavy, heavyN: n, upHeavy: Math.round(p.upHeavy * 1.9), trucks: [...p.trucks, { id: Date.now(), name: "PL-0" + n, cap: 30, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }] }; });
   const reset = () => { if (!window.confirm("Réinitialiser la partie ? La sauvegarde sera effacée.")) return; clearSave(); kin.current = new Map(); els.current = new Map(); setG(initState()); setSheet(null); };
 
   const whUsedPct = cap ? used / cap : 0;
@@ -332,9 +335,11 @@ function FluxTendu() {
   .hint{padding:8px 16px;font-size:11px;color:var(--mut);background:#0d1218;border-top:1px solid var(--line);line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .hint b{color:var(--amber)}
   .hint .rs{margin-left:auto;padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:#111820;color:var(--mut);font-size:10px;font-weight:700;cursor:pointer}
-  .fx-sheet{position:absolute;left:0;right:0;bottom:0;background:#151c25;border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:15px 18px 18px;box-shadow:0 -18px 40px -18px #000;animation:fxup .22s ease}
+  .fx-sheet{position:absolute;left:0;right:0;bottom:0;background:#151c25;border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:0 18px 18px;box-shadow:0 -18px 40px -18px #000;animation:fxup .22s ease;z-index:6;max-height:86%;overflow-y:auto}
   @keyframes fxup{from{transform:translateY(100%)}to{transform:translateY(0)}}
-  .fx-sheet-h{display:flex;align-items:center;margin-bottom:12px}
+  .fx-backdrop{position:absolute;inset:0;background:rgba(6,10,14,.45);z-index:5;animation:fxfade .2s ease}
+  @keyframes fxfade{from{opacity:0}to{opacity:1}}
+  .fx-sheet-h{display:flex;align-items:center;position:sticky;top:0;background:#151c25;padding:15px 0 12px;margin-bottom:2px;z-index:2}
   .fx-sheet-h .t{font-size:15px;font-weight:800}
   .fx-sheet-h .x{margin-left:auto;width:28px;height:28px;border-radius:7px;border:1px solid var(--line);background:#111820;color:var(--mut);cursor:pointer;font-weight:700}
   .lots{display:flex;gap:5px;margin-bottom:10px}
@@ -433,7 +438,7 @@ function FluxTendu() {
             <text x="82" y="98" textAnchor="middle" className="lbl-m">Marché de gros</text>
           </g>
 
-          <WarehouseView lvl={g.whLevel} used={used} cap={cap} onClick={() => setSheet("wh")} />
+          <WarehouseView lvl={g.whLevel} used={used} cap={cap} inv={g.inv} onClick={() => setSheet("wh")} />
 
           {CLIENTS.map((c) => {
             const cs = g.clients.find((x) => x.id === c.id);
@@ -443,13 +448,16 @@ function FluxTendu() {
           {g.trucks.map((t, i) => {
             const home = HOME(i);
             const cargo = t.phase === "out" && t.good ? GC(t.good).c : null;
+            const big = t.cap >= 24, bw = big ? 18 : 13;
             return (
               <g key={t.id} ref={(el) => { if (el) els.current.set(t.id, el); }} transform={"translate(" + home.x + " " + home.y + ") rotate(0)"}>
-                <g transform="translate(-9 -5)">
-                  <rect x="0" y="0" width="13" height="10" rx="2" fill={cargo ? "#2c3744" : "#3a4653"} stroke="#586777" strokeWidth=".6" />
-                  {cargo && <rect x="2" y="2" width="9" height="6" rx="1" fill={cargo} />}
-                  <rect x="13" y="1.5" width="6" height="7" rx="1.5" fill="var(--amber)" />
-                  <circle cx="4" cy="11" r="1.7" fill="#0d1117" /><circle cx="13" cy="11" r="1.7" fill="#0d1117" />
+                <g transform={"translate(" + (big ? -12 : -9) + " -5)"}>
+                  <rect x="0" y="0" width={bw} height="10" rx="2" fill={cargo ? "#2c3744" : big ? "#334153" : "#3a4653"} stroke="#586777" strokeWidth=".6" />
+                  {cargo && <rect x="2" y="2" width={bw - 4} height="6" rx="1" fill={cargo} />}
+                  <rect x={bw} y="1.5" width="6" height="7" rx="1.5" fill="var(--amber)" />
+                  <circle cx="4" cy="11" r="1.7" fill="#0d1117" />
+                  <circle cx={bw} cy="11" r="1.7" fill="#0d1117" />
+                  {big && <circle cx={bw - 6} cy="11" r="1.7" fill="#0d1117" />}
                 </g>
               </g>
             );
@@ -457,6 +465,8 @@ function FluxTendu() {
         </svg>
 
         {toasts.map((t) => (<div key={t.id} className="toast" style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%" }}>{t.text}</div>))}
+
+        {sheet && <div className="fx-backdrop" onClick={() => setSheet(null)} />}
 
         {sheet === "market" && (
           <div className="fx-sheet">
@@ -498,11 +508,12 @@ function FluxTendu() {
             <div className="whbar"><i style={{ width: whUsedPct * 100 + "%" }} /></div>
             {GOODS.map((x) => (<div className="grow" key={x.id}><span className="dot" style={{ background: x.c }} /><div className="nm"><div className="n">{x.name}</div></div><div className="px mono">{g.inv[x.id]} u.</div></div>))}
             <div className="eb" style={{ marginTop: 12 }}>Flotte · {g.trucks.length} camion(s) · {g.trucks.filter((t) => t.phase === "idle").length} dispo · cap/camion {maxVanCap(g.trucks)}</div>
+            {g.whLevel < WH_MAX
+              ? <button className="up upfull" disabled={g.cash < WH_UP[g.whLevel]} onClick={upWh}><span className="l">Agrandir l'entrepôt · Niv.{g.whLevel + 1}</span><span className="usub">{cap} → {whCap(g.whLevel + 1)} de stockage</span><span className="c mono">{fmtE(WH_UP[g.whLevel])}</span></button>
+              : <div className="up upfull" style={{ opacity: .6 }}><span className="l">Entrepôt au niveau max</span></div>}
             <div className="ups">
-              {g.whLevel < WH_MAX
-                ? <button className="up" disabled={g.cash < WH_UP[g.whLevel]} onClick={upWh}><span className="l">Agrandir · Niv.{g.whLevel + 1}</span><span className="usub">{cap} → {whCap(g.whLevel + 1)} stockage</span><span className="c mono">{fmtE(WH_UP[g.whLevel])}</span></button>
-                : <div className="up" style={{ opacity: .6 }}><span className="l">Entrepôt</span><span className="usub">Niveau max</span></div>}
-              <button className="up" disabled={g.cash < g.upVan} onClick={upVan}><span className="l">Nouveau camion</span><span className="usub">+1 véhicule · cap {VAN_CAP}</span><span className="c mono">{fmtE(g.upVan)}</span></button>
+              <button className="up" disabled={g.cash < g.upVan} onClick={upVan}><span className="l">Nouveau van</span><span className="usub">+1 véhicule · cap {VAN_CAP}</span><span className="c mono">{fmtE(g.upVan)}</span></button>
+              <button className="up" disabled={g.cash < g.upHeavy} onClick={upHeavy}><span className="l">Poids lourd</span><span className="usub">gros camion · cap 30</span><span className="c mono">{fmtE(g.upHeavy)}</span></button>
             </div>
           </div>
         )}
