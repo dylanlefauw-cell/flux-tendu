@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Flux Tendu — Chapitre 1</title>
+<style>
+  html,body{margin:0;background:#0a0e13;min-height:100%}
+  body{display:flex;align-items:flex-start;justify-content:center;padding:18px 10px 40px;
+       font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #root{width:100%}
+  .boot{color:#8b97a6;font-family:ui-monospace,monospace;text-align:center;padding:60px 0;font-size:13px}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div class="boot">Chargement de Flux Tendu…</div></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ============================================================
+   FLUX TENDU — Chapitre 1 · version PC déployable + sauvegarde
+   ============================================================ */
+
+const GOODS = [
+  { id: "grain", name: "Grain", code: "GRN", base: 12, vol: 0.9, c: "#b7c25a" },
+  { id: "textile", name: "Textile", code: "TEX", base: 34, vol: 2.3, c: "#4bbccf" },
+  { id: "compos", name: "Composants", code: "CMP", base: 78, vol: 5.6, c: "#a98bec" },
+];
+const GC = (id) => GOODS.find((g) => g.id === id);
+
+const CLIENTS = [
+  { id: "c1", name: "Pharmapole", cx: 306, cy: 62, route: [[112, 150], [214, 150], [214, 62], [282, 62]] },
+  { id: "c2", name: "Distrivert", cx: 322, cy: 156, route: [[112, 156], [242, 156], [298, 156]] },
+  { id: "c3", name: "Atelier K.", cx: 296, cy: 248, route: [[112, 162], [200, 162], [200, 248], [272, 248]] },
+];
+const CROUTE = Object.fromEntries(CLIENTS.map((c) => [c.id, c.route]));
+const CPOS = Object.fromEntries(CLIENTS.map((c) => [c.id, c]));
+
+const TICK_MS = 1300;
+const TRUCK_SPEED = 74;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const rint = (a, b) => Math.floor(rnd(a, b + 1));
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const fmtE = (n) => "€" + Math.round(n).toLocaleString("fr-FR");
+const HOME = (i) => ({ x: 60 + (i % 3) * 22, y: 200 + Math.floor(i / 3) * 20 });
+
+function polyLen(p) { let L = 0; for (let i = 1; i < p.length; i++) L += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return L; }
+function pointAt(p, d) {
+  if (p.length < 2) return { x: p[0][0], y: p[0][1], a: 0 };
+  let rem = d;
+  for (let i = 1; i < p.length; i++) {
+    const dx = p[i][0] - p[i - 1][0], dy = p[i][1] - p[i - 1][1], seg = Math.hypot(dx, dy);
+    if (rem <= seg || i === p.length - 1) { const t = seg ? clamp(rem / seg, 0, 1) : 0; return { x: p[i - 1][0] + dx * t, y: p[i - 1][1] + dy * t, a: Math.atan2(dy, dx) * 180 / Math.PI }; }
+    rem -= seg;
+  }
+}
+
+function mkContract(prices) {
+  const g = GOODS[rint(0, 2)];
+  const qty = rint(4, 11);
+  const payout = Math.round(qty * prices[g.id] * rnd(1.35, 1.85));
+  return { good: g.id, qty, payout, ttl: rint(10, 18), maxttl: 18 };
+}
+function initState() {
+  const prices = {}; GOODS.forEach((g) => (prices[g.id] = g.base));
+  return {
+    tick: 0, cash: 900, prices, trend: { grain: 0, textile: 0, compos: 0 },
+    inv: { grain: 0, textile: 0, compos: 0 }, cap: 60, lot: 5,
+    trucks: [{ id: 1, name: "Van-01", cap: 12, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }],
+    vanN: 1,
+    clients: [{ id: "c1", contract: mkContract(prices) }, { id: "c2", contract: null }, { id: "c3", contract: mkContract(prices) }],
+    delivered: 0, missed: 0, upWh: 400, upVan: 650,
+  };
+}
+function stepPrice(g, cur) { return clamp(cur + (g.base - cur) * 0.08 + (Math.random() * 2 - 1) * g.vol, g.base * 0.4, g.base * 2.4); }
+function logicTick(p) {
+  const prices = {}, trend = {};
+  GOODS.forEach((g) => { const nx = stepPrice(g, p.prices[g.id]); prices[g.id] = nx; trend[g.id] = nx > p.prices[g.id] + 0.05 ? 1 : nx < p.prices[g.id] - 0.05 ? -1 : 0; });
+  let missed = p.missed;
+  const clients = p.clients.map((c) => {
+    if (c.contract) { const ttl = c.contract.ttl - 1; if (ttl <= 0) { missed += 1; return { ...c, contract: null }; } return { ...c, contract: { ...c.contract, ttl } }; }
+    if (Math.random() < 0.16) return { ...c, contract: mkContract(prices) };
+    return c;
+  });
+  return { ...p, tick: p.tick + 1, prices, trend, clients, missed };
+}
+
+/* ---------- sauvegarde (localStorage) ---------- */
+const SAVE_KEY = "fluxtendu.save.v1";
+function loadSave() { try { const r = localStorage.getItem(SAVE_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+function writeSave(o) { try { localStorage.setItem(SAVE_KEY, JSON.stringify(o)); } catch (e) {} }
+function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} }
+function revive(g) {
+  // reprise propre : les camions en transit terminent leur job (pas de perte)
+  let cash = g.cash, delivered = g.delivered;
+  const trucks = (g.trucks || []).map((t) => {
+    if (t.phase === "out") { cash += t.payout || 0; delivered += 1; }
+    return { ...t, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 };
+  });
+  return { ...initState(), ...g, cash, delivered, trucks };
+}
+
+function FluxTendu() {
+  const [g, setG] = useState(() => { const s = loadSave(); return s && s.g ? revive(s.g) : initState(); });
+  const [speed, setSpeed] = useState(1);
+  const [sheet, setSheet] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [saved, setSaved] = useState(false);
+
+  const kin = useRef(new Map());
+  const els = useRef(new Map());
+  const speedRef = useRef(1); speedRef.current = speed;
+  const commit = useRef(() => {});
+  const toastId = useRef(0);
+
+  /* autosave (debounce) */
+  useEffect(() => {
+    const t = setTimeout(() => { writeSave({ v: 1, g, lastSeen: Date.now() }); setSaved(true); const h = setTimeout(() => setSaved(false), 1100); }, 500);
+    return () => clearTimeout(t);
+  }, [g]);
+
+  useEffect(() => {
+    if (speed === 0) return;
+    const id = setInterval(() => setG((p) => logicTick(p)), speed === 2 ? TICK_MS / 2 : TICK_MS);
+    return () => clearInterval(id);
+  }, [speed]);
+
+  useEffect(() => {
+    g.trucks.forEach((t, i) => {
+      const home = HOME(i);
+      let k = kin.current.get(t.id);
+      if (!k) { k = { phase: "idle", x: home.x, y: home.y, a: 0, dist: 0, total: 0, pts: [], arrived: false, payout: 0 }; kin.current.set(t.id, k); }
+      k.homeX = home.x; k.homeY = home.y;
+      if (t.phase !== k.phase) {
+        k.phase = t.phase; k.arrived = false;
+        if (t.phase === "out") { k.pts = CROUTE[t.clientId]; k.total = polyLen(k.pts); k.dist = 0; k.payout = t.payout; }
+        else if (t.phase === "back") { k.pts = [...CROUTE[t.clientId]].reverse(); k.total = polyLen(k.pts); k.dist = 0; }
+        else { k.x = home.x; k.y = home.y; k.pts = []; k.total = 0; k.dist = 0; }
+      }
+    });
+  }, [g.trucks]);
+
+  commit.current = (id, kind) => {
+    const k = kin.current.get(id);
+    if (kind === "client") {
+      setG((p) => ({ ...p, cash: p.cash + k.payout, delivered: p.delivered + 1 }));
+      const door = k.pts[k.pts.length - 1];
+      const tid = ++toastId.current;
+      setToasts((ts) => [...ts, { id: tid, x: door[0], y: door[1] - 16, text: "+" + fmtE(k.payout) }]);
+      setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== tid)), 1400);
+      setTimeout(() => setG((p) => { const j = p.trucks.findIndex((x) => x.id === id); if (j < 0) return p; const tr = [...p.trucks]; tr[j] = { ...tr[j], phase: "back" }; return { ...p, trucks: tr }; }), 480);
+    } else {
+      setG((p) => { const j = p.trucks.findIndex((x) => x.id === id); if (j < 0) return p; const tr = [...p.trucks]; tr[j] = { ...tr[j], phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }; return { ...p, trucks: tr }; });
+    }
+  };
+
+  useEffect(() => {
+    let raf, last = performance.now();
+    const loop = (now) => {
+      const dt = Math.min((now - last) / 1000, 0.05); last = now;
+      const mult = speedRef.current;
+      kin.current.forEach((k, id) => {
+        if ((k.phase === "out" || k.phase === "back") && !k.arrived && mult > 0) {
+          k.dist += TRUCK_SPEED * dt * mult;
+          if (k.dist >= k.total) { k.dist = k.total; k.arrived = true; const pt = pointAt(k.pts, k.total); k.x = pt.x; k.y = pt.y; commit.current(id, k.phase === "out" ? "client" : "home"); }
+          else { const pt = pointAt(k.pts, k.dist); k.x = pt.x; k.y = pt.y; k.a = pt.a; }
+        }
+        const el = els.current.get(id);
+        if (el) el.setAttribute("transform", "translate(" + k.x.toFixed(2) + " " + k.y.toFixed(2) + ") rotate(" + k.a.toFixed(1) + ")");
+      });
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const used = g.inv.grain + g.inv.textile + g.inv.compos;
+  const net = g.cash + GOODS.reduce((s, x) => s + g.inv[x.id] * g.prices[x.id], 0);
+  const day = Math.floor(g.tick / 24) + 1, hour = g.tick % 24;
+  const idleTruck = g.trucks.find((t) => t.phase === "idle");
+
+  const buy = (gid) => setG((p) => { const pr = p.prices[gid], sp = p.cap - (p.inv.grain + p.inv.textile + p.inv.compos), n = Math.min(p.lot, sp, Math.floor(p.cash / pr)); if (n <= 0) return p; return { ...p, cash: p.cash - n * pr, inv: { ...p.inv, [gid]: p.inv[gid] + n } }; });
+  const sell = (gid) => setG((p) => { const n = Math.min(p.lot, p.inv[gid]); if (n <= 0) return p; return { ...p, cash: p.cash + n * p.prices[gid], inv: { ...p.inv, [gid]: p.inv[gid] - n } }; });
+  const dispatch = (cid) => { setG((p) => { const c = p.clients.find((x) => x.id === cid); if (!c || !c.contract) return p; const { good, qty, payout } = c.contract; if (p.inv[good] < qty) return p; const ti = p.trucks.findIndex((t) => t.phase === "idle" && t.cap >= qty); if (ti < 0) return p; const trucks = [...p.trucks]; trucks[ti] = { ...trucks[ti], phase: "out", clientId: cid, good, qty, payout }; return { ...p, trucks, inv: { ...p.inv, [good]: p.inv[good] - qty }, clients: p.clients.map((x) => x.id === cid ? { ...x, contract: null } : x) }; }); setSheet(null); };
+  const upWh = () => setG((p) => p.cash < p.upWh ? p : { ...p, cash: p.cash - p.upWh, cap: p.cap + 20, upWh: Math.round(p.upWh * 1.7) });
+  const upVan = () => setG((p) => { if (p.cash < p.upVan) return p; const n = p.vanN + 1; return { ...p, cash: p.cash - p.upVan, vanN: n, upVan: Math.round(p.upVan * 1.9), trucks: [...p.trucks, { id: Date.now(), name: "Van-0" + n, cap: 12, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }] }; });
+  const reset = () => { if (!window.confirm("Réinitialiser la partie ? La sauvegarde sera effacée.")) return; clearSave(); kin.current = new Map(); els.current = new Map(); setG(initState()); setSheet(null); };
+
+  const whUsedPct = used / g.cap;
+  const crateN = Math.round(whUsedPct * 8);
+
+  const css = `
+  .fx{--bg:#0f141b;--line:#28323f;--ink:#e9eef4;--mut:#8b97a6;--amber:#f2a934;--gain:#46d38a;--loss:#f26363;--road:#232c37;
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;position:relative;
+      max-width:680px;margin:0 auto;background:var(--bg);color:var(--ink);border:1px solid var(--line);
+      border-radius:16px;overflow:hidden;box-shadow:0 26px 60px -22px #000;user-select:none}
+  .fx *{box-sizing:border-box}
+  .fx .mono{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+  .fx .eb{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--mut);font-weight:600}
+  .fx-hud{display:flex;align-items:center;gap:14px;padding:12px 16px;background:linear-gradient(180deg,#182029,#121820);border-bottom:1px solid var(--line)}
+  .fx-hud .brand{font-size:15px;font-weight:800;letter-spacing:.12em;margin-right:auto}
+  .fx-hud .brand b{color:var(--amber)}
+  .fx-stat{display:flex;flex-direction:column;line-height:1.1}
+  .fx-stat .k{font-size:8.5px;letter-spacing:.1em;color:var(--mut);text-transform:uppercase}
+  .fx-stat .v{font-size:15px;font-weight:700}
+  .fx-cash{color:var(--amber);text-shadow:0 0 16px rgba(242,169,52,.4)}
+  .fx-spd{display:flex;gap:3px;margin-left:2px}
+  .fx-spd button{width:28px;height:26px;border-radius:6px;border:1px solid var(--line);background:#111820;color:var(--mut);font-size:10px;font-weight:800;cursor:pointer}
+  .fx-spd button.on{background:var(--amber);color:#20160a;border-color:var(--amber)}
+  .fx-sub{display:flex;align-items:center;gap:16px;padding:7px 16px;background:#0d1218;border-bottom:1px solid var(--line);font-size:10px;color:var(--mut)}
+  .fx-sub b{color:var(--ink)}
+  .fx-save{margin-left:auto;font-size:9px;letter-spacing:.1em;text-transform:uppercase;transition:opacity .3s}
+  .fx-scene{position:relative;background:radial-gradient(120% 90% at 30% 20%,#16202b,#0e141b)}
+  .fx-scene svg{display:block;width:100%;height:auto}
+  .bld{cursor:pointer;transition:filter .15s}
+  .bld:hover{filter:brightness(1.18)}
+  .lbl{font-size:8px;font-weight:700;letter-spacing:.04em;fill:var(--ink)}
+  .lbl-m{fill:var(--mut);font-size:7.5px;letter-spacing:.1em;text-transform:uppercase}
+  .pulse{animation:fxp 1.1s ease-in-out infinite}
+  @keyframes fxp{0%,100%{opacity:1}50%{opacity:.45}}
+  .toast{position:absolute;transform:translate(-50%,-50%);font-family:ui-monospace,monospace;font-weight:800;font-size:13px;color:var(--gain);text-shadow:0 1px 3px #000;pointer-events:none;animation:fxrise 1.4s ease-out forwards}
+  @keyframes fxrise{0%{opacity:0;transform:translate(-50%,-40%) scale(.8)}20%{opacity:1}100%{opacity:0;transform:translate(-50%,-160%)}}
+  .hint{padding:8px 16px;font-size:11px;color:var(--mut);background:#0d1218;border-top:1px solid var(--line);line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .hint b{color:var(--amber)}
+  .hint .rs{margin-left:auto;padding:4px 10px;border-radius:7px;border:1px solid var(--line);background:#111820;color:var(--mut);font-size:10px;font-weight:700;cursor:pointer}
+  .fx-sheet{position:absolute;left:0;right:0;bottom:0;background:#151c25;border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:15px 18px 18px;box-shadow:0 -18px 40px -18px #000;animation:fxup .22s ease}
+  @keyframes fxup{from{transform:translateY(100%)}to{transform:translateY(0)}}
+  .fx-sheet-h{display:flex;align-items:center;margin-bottom:12px}
+  .fx-sheet-h .t{font-size:15px;font-weight:800}
+  .fx-sheet-h .x{margin-left:auto;width:28px;height:28px;border-radius:7px;border:1px solid var(--line);background:#111820;color:var(--mut);cursor:pointer;font-weight:700}
+  .lots{display:flex;gap:5px;margin-bottom:10px}
+  .lots button{padding:5px 12px;border-radius:7px;border:1px solid var(--line);background:#111820;color:var(--mut);font-size:12px;font-weight:800;cursor:pointer}
+  .lots button.on{background:#1e2632;color:var(--ink);border-color:var(--amber)}
+  .grow{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid #1b2330}
+  .grow:last-child{border-bottom:none}
+  .dot{width:11px;height:11px;border-radius:3px;flex:none}
+  .grow .nm{flex:1}.grow .nm .n{font-size:14px;font-weight:700}.grow .nm .s{font-size:11px;color:var(--mut)}
+  .px{font-size:15px;font-weight:700;min-width:56px;text-align:right}
+  .tb{display:flex;gap:6px}
+  .tb button{width:38px;height:32px;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;border:1px solid}
+  .tb .b{background:rgba(70,211,138,.13);border-color:rgba(70,211,138,.4);color:var(--gain)}
+  .tb .s{background:rgba(242,99,99,.1);border-color:rgba(242,99,99,.35);color:var(--loss)}
+  .tb button:disabled{opacity:.3;cursor:not-allowed}
+  .ups{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:6px}
+  .up{padding:12px 8px;border-radius:10px;border:1px solid var(--line);background:#111820;cursor:pointer;text-align:center}
+  .up:disabled{opacity:.4;cursor:not-allowed}
+  .up .l{font-size:12px;font-weight:700;display:block;margin-bottom:3px}
+  .up .c{font-size:13px;color:var(--amber);font-weight:800}
+  .whbar{height:8px;background:#26303c;border-radius:4px;margin:5px 0 15px;overflow:hidden}
+  .whbar i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),#ffcf6a);transition:width .3s}
+  .ct-row{display:flex;align-items:center;gap:11px;margin:2px 0 14px}
+  .ct-big{font-size:24px;font-weight:800}
+  .ct-pay{margin-left:auto;font-size:20px;font-weight:800;color:var(--gain)}
+  .marge{font-size:13px;font-weight:700}
+  .send{width:100%;padding:14px;border-radius:11px;border:1px solid var(--amber);background:var(--amber);color:#20160a;font-weight:800;font-size:15px;cursor:pointer}
+  .send:disabled{background:transparent;color:var(--mut);border-color:var(--line);cursor:not-allowed}
+  .empty{font-size:13px;color:var(--mut);text-align:center;padding:18px 0}
+  @media (prefers-reduced-motion:reduce){.pulse{animation:none}.toast{animation-duration:.01s}}
+  `;
+
+  return (
+    <div className="fx">
+      <style>{css}</style>
+
+      <div className="fx-hud">
+        <div className="brand">FLUX<b>·</b>TENDU</div>
+        <div className="fx-stat"><span className="k">Trésorerie</span><span className="v mono fx-cash">{fmtE(g.cash)}</span></div>
+        <div className="fx-stat"><span className="k">Actif net</span><span className="v mono">{fmtE(net)}</span></div>
+        <div className="fx-spd">
+          <button className={speed === 0 ? "on" : ""} onClick={() => setSpeed(0)}>❚❚</button>
+          <button className={speed === 1 ? "on" : ""} onClick={() => setSpeed(1)}>1×</button>
+          <button className={speed === 2 ? "on" : ""} onClick={() => setSpeed(2)}>2×</button>
+        </div>
+      </div>
+      <div className="fx-sub">
+        <span>Jour <b>{day}</b> · {String(hour).padStart(2, "0")}h</span>
+        <span>Livrés <b>{g.delivered}</b></span>
+        <span>Ratés <b style={{ color: g.missed ? "var(--loss)" : "var(--ink)" }}>{g.missed}</b></span>
+        <span className="fx-save" style={{ opacity: saved ? 1 : 0, color: "var(--gain)" }}>✓ sauvegardé</span>
+      </div>
+
+      <div className="fx-scene">
+        <svg viewBox="0 0 372 300">
+          {CLIENTS.map((c) => (<polyline key={c.id} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--road)" strokeWidth="13" strokeLinecap="round" strokeLinejoin="round" />))}
+          {CLIENTS.map((c) => (<polyline key={c.id + "d"} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="#3a4655" strokeWidth="1.4" strokeDasharray="5 7" strokeLinecap="round" opacity=".55" />))}
+          <line x1="82" y1="128" x2="82" y2="86" stroke="var(--road)" strokeWidth="11" strokeLinecap="round" />
+
+          <g className="bld" onClick={() => setSheet("market")}>
+            <rect x="56" y="52" width="52" height="34" rx="5" fill="#1c2632" stroke="#31404f" />
+            <rect x="56" y="52" width="52" height="11" rx="5" fill="#2a3746" />
+            {GOODS.map((gg, i) => <circle key={gg.id} cx={66 + i * 15} cy={74} r="4" fill={gg.c} />)}
+            <text x="82" y="98" textAnchor="middle" className="lbl-m">Marché de gros</text>
+          </g>
+
+          <g className="bld" onClick={() => setSheet("wh")}>
+            <rect x="50" y="122" width="62" height="54" rx="6" fill="#1b2531" stroke="#33424f" />
+            <rect x="50" y="122" width="62" height="13" rx="6" fill="var(--amber)" opacity=".85" />
+            {Array.from({ length: crateN }).map((_, i) => { const col = i % 4, row = Math.floor(i / 4); return <rect key={i} x={57 + col * 11} y={160 - row * 12} width="9" height="9" rx="1.5" fill="var(--amber)" opacity={.92} />; })}
+            <rect x="95" y="150" width="13" height="26" rx="2" fill="#12181f" stroke="#33424f" strokeWidth="1" />
+            <text x="81" y="119" textAnchor="middle" className="lbl">Entrepôt</text>
+            <text x="81" y="190" textAnchor="middle" className="lbl-m">{used}/{g.cap}</text>
+          </g>
+
+          {CLIENTS.map((c) => {
+            const ct = g.clients.find((x) => x.id === c.id)?.contract;
+            const urg = ct && ct.ttl <= 4;
+            const R = 13, circ = 2 * Math.PI * R;
+            return (
+              <g key={c.id}>
+                <g className="bld" onClick={() => setSheet(c.id)}>
+                  <rect x={c.cx - 22} y={c.cy - 16} width="44" height="34" rx="5" fill="#1a2430" stroke="#32404e" />
+                  <rect x={c.cx - 22} y={c.cy - 16} width="44" height="10" rx="5" fill="#2b3644" />
+                  <circle cx={c.cx} cy={c.cy + 4} r="4.5" fill="#33424f" />
+                  <text x={c.cx} y={c.cy + 30} textAnchor="middle" className="lbl-m">{c.name}</text>
+                </g>
+                {ct && (
+                  <g className={urg ? "pulse" : ""} style={{ cursor: "pointer" }} onClick={() => setSheet(c.id)}>
+                    <line x1={c.cx} y1={c.cy - 16} x2={c.cx} y2={c.cy - 30} stroke="#3a4655" strokeWidth="1.5" />
+                    <circle cx={c.cx} cy={c.cy - 44} r={R + 3} fill="#12181f" stroke="#2a3340" />
+                    <circle cx={c.cx} cy={c.cy - 44} r={R} fill="none" stroke={urg ? "var(--loss)" : "var(--amber)"} strokeWidth="2.5" strokeDasharray={circ} strokeDashoffset={circ * (1 - ct.ttl / ct.maxttl)} transform={"rotate(-90 " + c.cx + " " + (c.cy - 44) + ")"} strokeLinecap="round" />
+                    <circle cx={c.cx} cy={c.cy - 48} r="4.5" fill={GC(ct.good).c} />
+                    <text x={c.cx} y={c.cy - 38} textAnchor="middle" className="mono" style={{ fontSize: 9, fontWeight: 800, fill: "#e9eef4" }}>×{ct.qty}</text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
+          {g.trucks.map((t, i) => {
+            const home = HOME(i);
+            const cargo = t.phase === "out" && t.good ? GC(t.good).c : null;
+            return (
+              <g key={t.id} ref={(el) => { if (el) els.current.set(t.id, el); }} transform={"translate(" + home.x + " " + home.y + ") rotate(0)"}>
+                <g transform="translate(-9 -5)">
+                  <rect x="0" y="0" width="13" height="10" rx="2" fill={cargo ? "#2c3744" : "#3a4653"} stroke="#586777" strokeWidth=".6" />
+                  {cargo && <rect x="2" y="2" width="9" height="6" rx="1" fill={cargo} />}
+                  <rect x="13" y="1.5" width="6" height="7" rx="1.5" fill="var(--amber)" />
+                  <circle cx="4" cy="11" r="1.7" fill="#0d1117" /><circle cx="13" cy="11" r="1.7" fill="#0d1117" />
+                </g>
+              </g>
+            );
+          })}
+        </svg>
+
+        {toasts.map((t) => (<div key={t.id} className="toast" style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%" }}>{t.text}</div>))}
+
+        {sheet === "market" && (
+          <div className="fx-sheet">
+            <div className="fx-sheet-h"><span className="t">Marché de gros</span><button className="x" onClick={() => setSheet(null)}>✕</button></div>
+            <div className="lots">{[1, 5, 10].map((n) => <button key={n} className={g.lot === n ? "on" : ""} onClick={() => setG((p) => ({ ...p, lot: n }))}>×{n}</button>)}</div>
+            {GOODS.map((x) => {
+              const pr = g.prices[x.id], tr = g.trend[x.id], sp = g.cap - used;
+              return (
+                <div className="grow" key={x.id}>
+                  <span className="dot" style={{ background: x.c }} />
+                  <div className="nm"><div className="n">{x.name}</div><div className="s">{x.code} · stock {g.inv[x.id]}</div></div>
+                  <div className="px mono" style={{ color: tr > 0 ? "var(--gain)" : tr < 0 ? "var(--loss)" : "var(--ink)" }}>{tr > 0 ? "▲" : tr < 0 ? "▼" : ""}{fmtE(pr)}</div>
+                  <div className="tb"><button className="b" disabled={g.cash < pr || sp < 1} onClick={() => buy(x.id)}>＋</button><button className="s" disabled={g.inv[x.id] < 1} onClick={() => sell(x.id)}>－</button></div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {sheet === "wh" && (
+          <div className="fx-sheet">
+            <div className="fx-sheet-h"><span className="t">Entrepôt & flotte</span><button className="x" onClick={() => setSheet(null)}>✕</button></div>
+            <div className="eb">Capacité {used}/{g.cap}</div>
+            <div className="whbar"><i style={{ width: whUsedPct * 100 + "%" }} /></div>
+            {GOODS.map((x) => (<div className="grow" key={x.id}><span className="dot" style={{ background: x.c }} /><div className="nm"><div className="n">{x.name}</div></div><div className="px mono">{g.inv[x.id]} u.</div></div>))}
+            <div className="eb" style={{ marginTop: 12 }}>Flotte · {g.trucks.length} camion(s) · {g.trucks.filter((t) => t.phase === "idle").length} dispo</div>
+            <div className="ups">
+              <button className="up" disabled={g.cash < g.upWh} onClick={upWh}><span className="l">Entrepôt +20</span><span className="c mono">{fmtE(g.upWh)}</span></button>
+              <button className="up" disabled={g.cash < g.upVan} onClick={upVan}><span className="l">Nouveau van</span><span className="c mono">{fmtE(g.upVan)}</span></button>
+            </div>
+          </div>
+        )}
+
+        {CLIENTS.some((c) => c.id === sheet) && (() => {
+          const c = CPOS[sheet]; const ct = g.clients.find((x) => x.id === sheet)?.contract;
+          return (
+            <div className="fx-sheet">
+              <div className="fx-sheet-h"><span className="t">{c.name}</span><button className="x" onClick={() => setSheet(null)}>✕</button></div>
+              {!ct ? <div className="empty">Pas de commande pour l'instant.<br />Reviens quand une pastille apparaît.</div> : (() => {
+                const good = GC(ct.good); const marge = ct.payout - ct.qty * g.prices[ct.good];
+                const haveStock = g.inv[ct.good] >= ct.qty; const ok = haveStock && !!idleTruck && idleTruck.cap >= ct.qty;
+                return (
+                  <React.Fragment>
+                    <div className="ct-row">
+                      <span className="dot" style={{ width: 17, height: 17, background: good.c }} />
+                      <span className="ct-big mono">{ct.qty}×</span><span style={{ fontSize: 14, color: "var(--mut)" }}>{good.name}</span>
+                      <span className="ct-pay mono">{fmtE(ct.payout)}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 16, marginBottom: 14 }}>
+                      <span className="marge mono" style={{ color: marge >= 0 ? "var(--gain)" : "var(--loss)" }}>Marge {marge >= 0 ? "+" : ""}{fmtE(marge)}</span>
+                      <span className="marge mono" style={{ color: "var(--mut)" }}>Échéance {ct.ttl}h</span>
+                      <span className="marge mono" style={{ color: haveStock ? "var(--gain)" : "var(--loss)" }}>Stock {g.inv[ct.good]}/{ct.qty}</span>
+                    </div>
+                    <button className="send" disabled={!ok} onClick={() => dispatch(sheet)}>{!haveStock ? "Stock insuffisant — achète au marché" : !idleTruck ? "Aucun camion disponible" : "Envoyer un camion →"}</button>
+                  </React.Fragment>
+                );
+              })()}
+            </div>
+          );
+        })()}
+      </div>
+
+      <div className="hint">
+        <span>Touche le <b>Marché</b> (acheter bas), l'<b>Entrepôt</b> (stocks & upgrades), un <b>client</b> avec pastille (livrer). Progression sauvegardée automatiquement.</span>
+        <button className="rs" onClick={reset}>Réinitialiser</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<FluxTendu />);
+</script>
+</body>
+</html>
