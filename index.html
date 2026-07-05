@@ -44,6 +44,7 @@ const TICK_MS = 1300;
 const TRUCK_SPEED = 74;
 const BREAK_CHANCE = 0.02;
 const TOW_TIME = 4;
+const xpReq = (lvl) => Math.round(80 * Math.pow(1.35, lvl - 1));
 const rnd = (a, b) => a + Math.random() * (b - a);
 const rint = (a, b) => Math.floor(rnd(a, b + 1));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -92,7 +93,7 @@ function initState() {
     trucks: [{ id: 1, name: "Van-01", cap: VAN_CAP, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }],
     vanN: 1,
     clients: [{ id: "c1", lvl: 1, contract: mkContract(prices, 1) }, { id: "c2", lvl: 1, contract: null }, { id: "c3", lvl: 1, contract: mkContract(prices, 1) }],
-    delivered: 0, missed: 0, upVan: 650, upHeavy: 1400, heavyN: 0, breakdowns: 0,
+    delivered: 0, missed: 0, upVan: 650, upHeavy: 1400, heavyN: 0, breakdowns: 0, xp: 0, level: 1,
   };
 }
 function stepPrice(g, cur) { return clamp(cur + (g.base - cur) * 0.08 + (Math.random() * 2 - 1) * g.vol, g.base * 0.4, g.base * 2.4); }
@@ -368,7 +369,12 @@ function FluxTendu() {
   commit.current = (id, kind) => {
     const k = kin.current.get(id);
     if (kind === "client") {
-      setG((p) => ({ ...p, cash: p.cash + k.payout, delivered: p.delivered + 1 }));
+      setG((p) => {
+        const gain = Math.max(5, Math.round(k.payout / 12));
+        let xp = (p.xp || 0) + gain, level = p.level || 1, bonus = 0;
+        while (xp >= xpReq(level)) { xp -= xpReq(level); level += 1; bonus += 60 * level; }
+        return { ...p, cash: p.cash + k.payout + bonus, delivered: p.delivered + 1, xp, level };
+      });
       const door = k.pts[k.pts.length - 1];
       const tid = ++toastId.current;
       setToasts((ts) => [...ts, { id: tid, x: door[0], y: door[1] - 16, text: "+" + fmtE(k.payout) }]);
@@ -416,10 +422,21 @@ function FluxTendu() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  const prevLevel = useRef(g.level);
+  useEffect(() => {
+    if (g.level > prevLevel.current) {
+      const tid = ++toastId.current;
+      setToasts((ts) => [...ts, { id: tid, x: 186, y: 66, text: "★ Niveau " + g.level + " !", lvlup: true }]);
+      setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== tid)), 2200);
+    }
+    prevLevel.current = g.level;
+  }, [g.level]);
+
   const used = g.inv.grain + g.inv.textile + g.inv.compos;
   const cap = whCap(g.whLevel);
   const net = g.cash + GOODS.reduce((s, x) => s + g.inv[x.id] * g.prices[x.id], 0);
   const day = Math.floor(g.tick / 24) + 1, hour = g.tick % 24;
+  const req = xpReq(g.level || 1), xpPct = Math.min(100, ((g.xp || 0) / req) * 100);
   const idleTruck = g.trucks.find((t) => t.phase === "idle");
 
   const buy = (gid) => setG((p) => { const pr = p.prices[gid], sp = whCap(p.whLevel) - (p.inv.grain + p.inv.textile + p.inv.compos), n = Math.min(p.lot, sp, Math.floor(p.cash / pr)); if (n <= 0) return p; return { ...p, cash: p.cash - n * pr, inv: { ...p.inv, [gid]: p.inv[gid] + n } }; });
@@ -453,6 +470,11 @@ function FluxTendu() {
   .fx-spd button.on{background:var(--amber);color:#20160a;border-color:var(--amber)}
   .fx-sub{display:flex;align-items:center;gap:16px;padding:7px 16px;background:#0d1218;border-bottom:1px solid var(--line);font-size:10px;color:var(--mut)}
   .fx-sub b{color:var(--ink)}
+  .fx-xp{display:flex;align-items:center;gap:10px;padding:7px 16px;background:#111a20;border-bottom:1px solid var(--line)}
+  .xp-lvl{font-size:11px;font-weight:800;color:var(--amber);white-space:nowrap;letter-spacing:.02em}
+  .xp-bar{flex:1;height:8px;background:#26303c;border-radius:5px;overflow:hidden;border:1px solid #2c3644}
+  .xp-bar i{display:block;height:100%;background:linear-gradient(90deg,#f2a934,#ffd479);border-radius:5px;transition:width .4s ease}
+  .xp-txt{font-size:9.5px;color:var(--mut);white-space:nowrap}
   .fx-save{margin-left:auto;font-size:9px;letter-spacing:.1em;text-transform:uppercase;transition:opacity .3s}
   .fx-scene{position:relative;background:#111917}
   .fx-scene svg{display:block;width:100%;height:auto}
@@ -521,6 +543,7 @@ function FluxTendu() {
   @keyframes hz{0%,100%{opacity:1}50%{opacity:.45}}
   .garage-in{animation:gin .6s ease-out}
   @keyframes gin{from{opacity:0}to{opacity:1}}
+  .toast.lvlup{font-size:17px;text-shadow:0 0 12px rgba(242,169,52,.55),0 1px 3px #000}
   @media (prefers-reduced-motion:reduce){.pulse{animation:none}.toast{animation-duration:.01s}.hazard{animation:none}}
   `;
 
@@ -537,6 +560,11 @@ function FluxTendu() {
           <button className={speed === 1 ? "on" : ""} onClick={() => setSpeed(1)}>1×</button>
           <button className={speed === 2 ? "on" : ""} onClick={() => setSpeed(2)}>2×</button>
         </div>
+      </div>
+      <div className="fx-xp">
+        <span className="xp-lvl">Niveau {g.level || 1}</span>
+        <div className="xp-bar"><i style={{ width: xpPct + "%" }} /></div>
+        <span className="xp-txt mono">{g.xp || 0} / {req} XP</span>
       </div>
       <div className="fx-sub">
         <span>Jour <b>{day}</b> · {String(hour).padStart(2, "0")}h</span>
@@ -612,9 +640,12 @@ function FluxTendu() {
                   <rect x="0" y="0" width={bw} height="10" rx="2" fill={cargo ? "#2c3744" : big ? "#334153" : "#3a4653"} stroke="#586777" strokeWidth=".6" />
                   {cargo && <rect x="2" y="2" width={bw - 4} height="6" rx="1" fill={cargo} />}
                   <rect x={bw} y="1.5" width="6" height="7" rx="1.5" fill="var(--amber)" />
-                  <circle cx="4" cy="11" r="1.7" fill="#0d1117" />
-                  <circle cx={bw} cy="11" r="1.7" fill="#0d1117" />
-                  {big && <circle cx={bw - 6} cy="11" r="1.7" fill="#0d1117" />}
+                  <rect x="2.5" y="-1" width="3.4" height="2" rx="1" fill="#0d1117" />
+                  <rect x="2.5" y="9" width="3.4" height="2" rx="1" fill="#0d1117" />
+                  <rect x={bw - 5.5} y="-1" width="3.4" height="2" rx="1" fill="#0d1117" />
+                  <rect x={bw - 5.5} y="9" width="3.4" height="2" rx="1" fill="#0d1117" />
+                  {big && <rect x="9" y="-1" width="3.4" height="2" rx="1" fill="#0d1117" />}
+                  {big && <rect x="9" y="9" width="3.4" height="2" rx="1" fill="#0d1117" />}
                   {moving && <circle cx={bw + 5} cy="3" r="0.9" fill="#fff2cc" />}
                   {moving && <circle cx={bw + 5} cy="7" r="0.9" fill="#fff2cc" />}
                 </g>
@@ -646,7 +677,7 @@ function FluxTendu() {
           ))}
         </svg>
 
-        {toasts.map((t) => (<div key={t.id} className="toast" style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%", color: t.neg ? "var(--loss)" : "var(--gain)" }}>{t.text}</div>))}
+        {toasts.map((t) => (<div key={t.id} className={"toast" + (t.lvlup ? " lvlup" : "")} style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%", color: t.lvlup ? "var(--amber)" : t.neg ? "var(--loss)" : "var(--gain)" }}>{t.text}</div>))}
 
         {sheet && <div className="fx-backdrop" onClick={() => setSheet(null)} />}
 
