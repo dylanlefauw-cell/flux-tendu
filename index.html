@@ -42,6 +42,8 @@ const CPOS = Object.fromEntries(CLIENTS.map((c) => [c.id, c]));
 
 const TICK_MS = 1300;
 const TRUCK_SPEED = 74;
+const BREAK_CHANCE = 0.02;
+const TOW_TIME = 4;
 const rnd = (a, b) => a + Math.random() * (b - a);
 const rint = (a, b) => Math.floor(rnd(a, b + 1));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -90,7 +92,7 @@ function initState() {
     trucks: [{ id: 1, name: "Van-01", cap: VAN_CAP, phase: "idle", clientId: null, good: null, qty: 0, payout: 0 }],
     vanN: 1,
     clients: [{ id: "c1", lvl: 1, contract: mkContract(prices, 1) }, { id: "c2", lvl: 1, contract: null }, { id: "c3", lvl: 1, contract: mkContract(prices, 1) }],
-    delivered: 0, missed: 0, upVan: 650, upHeavy: 1400, heavyN: 0,
+    delivered: 0, missed: 0, upVan: 650, upHeavy: 1400, heavyN: 0, breakdowns: 0,
   };
 }
 function stepPrice(g, cur) { return clamp(cur + (g.base - cur) * 0.08 + (Math.random() * 2 - 1) * g.vol, g.base * 0.4, g.base * 2.4); }
@@ -164,6 +166,7 @@ function WarehouseView({ lvl, used, cap, inv, onClick }) {
   const showCols = crateCols.slice(0, cap5);
   return (
     <g className="bld" onClick={onClick}>
+      <ellipse cx={cx + 3} cy="180" rx={W / 2 + 3} ry="6" fill="#000" opacity="0.28" />
       {lvl >= 3 && <g><rect x={x - 15} y={y + H - 32} width="12" height="32" rx="6" fill="#222d38" stroke="#33424f" /><ellipse cx={x - 9} cy={y + H - 32} rx="6" ry="2.5" fill="#2b3746" /></g>}
       <rect x={x} y={y} width={W} height={H} rx="6" fill="#1b2531" stroke="#33424f" />
       <rect x={x} y={y} width={W} height={roofH} rx="6" fill="var(--amber)" opacity="0.85" />
@@ -186,6 +189,7 @@ function ClientView({ c, lvl, ct, onClick }) {
   return (
     <g>
       <g className="bld" onClick={onClick}>
+        <ellipse cx={c.cx + 2} cy={c.cy + 20} rx={W / 2 + 2} ry="5" fill="#000" opacity="0.28" />
         <rect x={bx} y={by} width={W} height={H} rx="5" fill="#1a2430" stroke="#32404e" />
         <rect x={bx} y={by} width={W} height="10" rx="5" fill="#2b3644" />
         {lvl >= 3 && [0, 1, 2].map((i) => <rect key={i} x={bx + 7 + i * ((W - 14) / 2)} y={by + 15} width="7" height="6" rx="1" fill="#0f1620" stroke="#33424f" strokeWidth=".5" />)}
@@ -215,6 +219,11 @@ const SKYLINE = [
   { x: 196, w: 22, h: 24 }, { x: 222, w: 15, h: 14 }, { x: 250, w: 20, h: 30 }, { x: 274, w: 16, h: 20 },
   { x: 298, w: 15, h: 16 }, { x: 318, w: 22, h: 27 }, { x: 344, w: 16, h: 22 },
 ];
+const STARS = [
+  [24, 12, 0.7, 0.7, 3.2], [58, 8, 0.6, 0.5, 4.1], [90, 14, 0.8, 0.8, 2.8], [138, 6, 0.6, 0.6, 3.6],
+  [166, 16, 0.7, 0.5, 4.4], [210, 9, 0.8, 0.75, 3.0], [244, 5, 0.6, 0.5, 3.8], [286, 13, 0.7, 0.6, 4.2],
+  [320, 7, 0.6, 0.55, 3.3], [352, 15, 0.8, 0.7, 2.9], [110, 4, 0.5, 0.45, 4.6], [190, 18, 0.6, 0.5, 3.5],
+];
 const RING = "M 52 40 H 342 A 12 12 0 0 1 354 52 V 254 A 12 12 0 0 1 342 266 H 52 A 12 12 0 0 1 40 254 V 52 A 12 12 0 0 1 52 40 Z";
 
 function Tree({ x, y, s = 1, dur = 3.6, delay = 0 }) {
@@ -234,13 +243,14 @@ function Tree({ x, y, s = 1, dur = 3.6, delay = 0 }) {
   );
 }
 
-function Car({ dur, begin, color }) {
+function Car({ dur, begin, color, path = "ring" }) {
   return (
     <g>
-      <animateMotion dur={dur + "s"} begin={begin + "s"} repeatCount="indefinite" rotate="auto"><mpath xlinkHref="#ring" /></animateMotion>
+      <animateMotion dur={dur + "s"} begin={begin + "s"} repeatCount="indefinite" rotate="auto"><mpath xlinkHref={"#" + path} /></animateMotion>
       <rect x="-4" y="-2.2" width="8" height="4.4" rx="1.3" fill={color} />
       <rect x="-3.6" y="-2.2" width="2.2" height="4.4" rx="1.1" fill="#0e1316" opacity="0.3" />
-      <circle cx="3.4" cy="0" r="0.9" fill="#f6e6b4" opacity="0.85" />
+      <ellipse cx="8" cy="0" rx="6" ry="2.4" fill="url(#headlight)" />
+      <circle cx="3.4" cy="0" r="0.9" fill="#f6e6b4" opacity="0.9" />
     </g>
   );
 }
@@ -253,9 +263,12 @@ const Scenery = React.memo(function Scenery() {
           <stop offset="0%" stopColor="#21312f" /><stop offset="52%" stopColor="#17231f" /><stop offset="100%" stopColor="#101715" />
         </linearGradient>
         <radialGradient id="lampGlow"><stop offset="0%" stopColor="#f2a934" stopOpacity="0.3" /><stop offset="100%" stopColor="#f2a934" stopOpacity="0" /></radialGradient>
+        <radialGradient id="headlight"><stop offset="0%" stopColor="#fff2cc" stopOpacity="0.5" /><stop offset="100%" stopColor="#fff2cc" stopOpacity="0" /></radialGradient>
       </defs>
       <rect x="0" y="0" width="372" height="300" fill="url(#skyGrad)" />
       {[64, 124, 188, 250].map((yy) => <rect key={yy} x="0" y={yy} width="372" height="20" fill="#ffffff" opacity="0.012" />)}
+
+      {STARS.map((s, i) => (<circle key={i} cx={s[0]} cy={s[1]} r={s[2]} fill="#dfe8f0"><animate attributeName="opacity" values={s[3] + ";" + (s[3] * 0.3) + ";" + s[3]} dur={s[4] + "s"} repeatCount="indefinite" /></circle>))}
 
       {SKYLINE.map((b, i) => (
         <g key={i}>
@@ -267,18 +280,8 @@ const Scenery = React.memo(function Scenery() {
       <ellipse cx="202" cy="240" rx="82" ry="22" fill="#1a2a20" opacity="0.75" />
       <ellipse cx="340" cy="150" rx="16" ry="72" fill="#1a2a20" opacity="0.7" />
 
-      <path id="ring" d={RING} fill="none" stroke="#1f272e" strokeWidth="9" />
-      <path d={RING} fill="none" stroke="#3a4655" strokeWidth="1" strokeDasharray="4 8" opacity="0.5" />
-
-      <Car dur={26} begin={0} color="#c56f6f" />
-      <Car dur={26} begin={-5.2} color="#6f96c5" />
-      <Car dur={26} begin={-10.4} color="#c9b46f" />
-      <Car dur={26} begin={-15.6} color="#7cb98a" />
-      <Car dur={26} begin={-20.8} color="#b98ac9" />
-      <Car dur={34} begin={-8} color="#9aa6b2" />
-
       <Tree x={126} y={95} s={0.8} dur={3.9} delay={0.9} />
-      <Tree x={150} y={236} s={0.92} dur={3.5} delay={0.2} />
+      <Tree x={110} y={255} s={0.9} dur={3.5} delay={0.2} />
       <Tree x={176} y={244} s={0.8} dur={4.2} delay={1.3} />
       <Tree x={230} y={238} s={0.9} dur={3.6} delay={0.5} />
       <Tree x={256} y={230} s={0.84} dur={4.0} delay={1.0} />
@@ -297,6 +300,27 @@ const Scenery = React.memo(function Scenery() {
   );
 });
 
+const rtPath = (r) => r.map((p, i) => (i === 0 ? "M " : "L ") + p[0] + " " + p[1]).join(" ") + " " + [...r].reverse().slice(1).map((p) => "L " + p[0] + " " + p[1]).join(" ");
+
+const GameTraffic = React.memo(function GameTraffic() {
+  return (
+    <g>
+      <path id="gr1" d={rtPath(CROUTE.c1)} fill="none" stroke="none" />
+      <path id="gr2" d={rtPath(CROUTE.c2)} fill="none" stroke="none" />
+      <path id="gr3" d={rtPath(CROUTE.c3)} fill="none" stroke="none" />
+      <Car path="gr1" dur={16} begin={0} color="#8fa0b0" />
+      <Car path="gr1" dur={16} begin={-8} color="#c07a7a" />
+      <Car path="gr2" dur={13} begin={-3} color="#b0a070" />
+      <Car path="gr2" dur={13} begin={-9} color="#7ba088" />
+      <Car path="gr3" dur={17} begin={-5} color="#8a90c0" />
+      <Car path="gr3" dur={17} begin={-12} color="#a0a6b2" />
+      <Car path="gr1" dur={16} begin={-12} color="#c9b46f" />
+      <Car path="gr2" dur={13} begin={-6} color="#b98ac9" />
+      <Car path="gr3" dur={17} begin={-2} color="#7cb98a" />
+    </g>
+  );
+});
+
 function FluxTendu() {
   const [g, setG] = useState(() => { const s = loadSave(); return s && s.g ? revive(s.g) : initState(); });
   const [speed, setSpeed] = useState(1);
@@ -304,11 +328,14 @@ function FluxTendu() {
   const [toasts, setToasts] = useState([]);
   const [saved, setSaved] = useState(false);
   const [selGood, setSelGood] = useState("compos");
+  const [breakdowns, setBreakdowns] = useState([]);
 
   const kin = useRef(new Map());
   const els = useRef(new Map());
   const speedRef = useRef(1); speedRef.current = speed;
   const commit = useRef(() => {});
+  const breakRef = useRef(() => {});
+  const repairRef = useRef(() => {});
   const toastId = useRef(0);
 
   /* autosave (debounce) */
@@ -327,7 +354,7 @@ function FluxTendu() {
     g.trucks.forEach((t, i) => {
       const home = HOME(i);
       let k = kin.current.get(t.id);
-      if (!k) { k = { phase: "idle", x: home.x, y: home.y, a: 0, dist: 0, total: 0, pts: [], arrived: false, payout: 0 }; kin.current.set(t.id, k); }
+      if (!k) { k = { phase: "idle", x: home.x, y: home.y, a: 0, dist: 0, total: 0, pts: [], arrived: false, payout: 0, broken: false, brokenT: 0 }; kin.current.set(t.id, k); }
       k.homeX = home.x; k.homeY = home.y;
       if (t.phase !== k.phase) {
         k.phase = t.phase; k.arrived = false;
@@ -352,6 +379,16 @@ function FluxTendu() {
     }
   };
 
+  breakRef.current = (id, x, y) => {
+    const cost = 110 + Math.round(Math.random() * 150);
+    setG((p) => ({ ...p, cash: p.cash - cost, breakdowns: (p.breakdowns || 0) + 1 }));
+    setBreakdowns((bs) => [...bs.filter((b) => b.id !== id), { id, x, y }]);
+    const tid = ++toastId.current;
+    setToasts((ts) => [...ts, { id: tid, x, y: y - 14, text: "Panne −" + fmtE(cost), neg: true }]);
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== tid)), 1900);
+  };
+  repairRef.current = (id) => { setBreakdowns((bs) => bs.filter((b) => b.id !== id)); };
+
   useEffect(() => {
     let raf, last = performance.now();
     const loop = (now) => {
@@ -359,9 +396,16 @@ function FluxTendu() {
       const mult = speedRef.current;
       kin.current.forEach((k, id) => {
         if ((k.phase === "out" || k.phase === "back") && !k.arrived && mult > 0) {
-          k.dist += TRUCK_SPEED * dt * mult;
-          if (k.dist >= k.total) { k.dist = k.total; k.arrived = true; const pt = pointAt(k.pts, k.total); k.x = pt.x; k.y = pt.y; commit.current(id, k.phase === "out" ? "client" : "home"); }
-          else { const pt = pointAt(k.pts, k.dist); k.x = pt.x; k.y = pt.y; k.a = pt.a; }
+          if (k.broken) {
+            k.brokenT -= dt * mult;
+            if (k.brokenT <= 0) { k.broken = false; repairRef.current(id); }
+          } else if (Math.random() < BREAK_CHANCE * dt * mult) {
+            k.broken = true; k.brokenT = TOW_TIME; breakRef.current(id, k.x, k.y);
+          } else {
+            k.dist += TRUCK_SPEED * dt * mult;
+            if (k.dist >= k.total) { k.dist = k.total; k.arrived = true; const pt = pointAt(k.pts, k.total); k.x = pt.x; k.y = pt.y; commit.current(id, k.phase === "out" ? "client" : "home"); }
+            else { const pt = pointAt(k.pts, k.dist); k.x = pt.x; k.y = pt.y; k.a = pt.a; }
+          }
         }
         const el = els.current.get(id);
         if (el) el.setAttribute("transform", "translate(" + k.x.toFixed(2) + " " + k.y.toFixed(2) + ") rotate(" + k.a.toFixed(1) + ")");
@@ -473,7 +517,11 @@ function FluxTendu() {
   .lvlbadge{font-size:10px;font-weight:800;color:var(--amber);background:rgba(242,169,52,.14);border:1px solid rgba(242,169,52,.35);padding:1px 7px;border-radius:20px;vertical-align:middle;margin-left:6px}
   .usub{display:block;font-size:9.5px;color:var(--mut);font-weight:600;margin:2px 0 3px;line-height:1.3}
   .upfull{display:block;width:100%;margin-top:12px}
-  @media (prefers-reduced-motion:reduce){.pulse{animation:none}.toast{animation-duration:.01s}}
+  .hazard{animation:hz .9s ease-in-out infinite}
+  @keyframes hz{0%,100%{opacity:1}50%{opacity:.45}}
+  .garage-in{animation:gin .6s ease-out}
+  @keyframes gin{from{opacity:0}to{opacity:1}}
+  @media (prefers-reduced-motion:reduce){.pulse{animation:none}.toast{animation-duration:.01s}.hazard{animation:none}}
   `;
 
   return (
@@ -494,6 +542,7 @@ function FluxTendu() {
         <span>Jour <b>{day}</b> · {String(hour).padStart(2, "0")}h</span>
         <span>Livrés <b>{g.delivered}</b></span>
         <span>Ratés <b style={{ color: g.missed ? "var(--loss)" : "var(--ink)" }}>{g.missed}</b></span>
+        <span>Pannes <b style={{ color: (g.breakdowns || 0) ? "var(--loss)" : "var(--ink)" }}>{g.breakdowns || 0}</b></span>
         <span className="fx-save" style={{ opacity: saved ? 1 : 0, color: "var(--gain)" }}>✓ sauvegardé</span>
       </div>
 
@@ -519,6 +568,10 @@ function FluxTendu() {
           {CLIENTS.map((c) => (<polyline key={c.id} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--road)" strokeWidth="13" strokeLinecap="round" strokeLinejoin="round" />))}
           {CLIENTS.map((c) => (<polyline key={c.id + "d"} points={c.route.map((p) => p.join(",")).join(" ")} fill="none" stroke="#3a4655" strokeWidth="1.4" strokeDasharray="5 7" strokeLinecap="round" opacity=".55" />))}
           <line x1="82" y1="128" x2="82" y2="86" stroke="var(--road)" strokeWidth="11" strokeLinecap="round" />
+          {g.breakdowns >= 1 && <line x1="150" y1="204" x2="150" y2="150" stroke="var(--road)" strokeWidth="13" strokeLinecap="round" />}
+          {g.breakdowns >= 1 && <line x1="150" y1="204" x2="150" y2="150" stroke="#3a4655" strokeWidth="1.4" strokeDasharray="5 7" opacity=".55" />}
+
+          <GameTraffic />
 
           <g className="bld" onClick={() => setSheet("market")}>
             <rect x="56" y="52" width="52" height="34" rx="5" fill="#1c2632" stroke="#31404f" />
@@ -526,6 +579,19 @@ function FluxTendu() {
             {GOODS.map((gg, i) => <circle key={gg.id} cx={66 + i * 15} cy={74} r="4" fill={gg.c} />)}
             <text x="82" y="98" textAnchor="middle" className="lbl-m">Marché de gros</text>
           </g>
+
+          {g.breakdowns >= 1 && (
+            <g className="garage-in">
+              <ellipse cx="152" cy="240" rx="25" ry="5" fill="#000" opacity="0.28" />
+              <rect x="127" y="205" width="46" height="34" rx="5" fill="#1e2630" stroke="#33424f" />
+              <rect x="127" y="205" width="46" height="9" rx="5" fill="#c26b3a" />
+              <rect x="141" y="220" width="18" height="19" rx="2" fill="#12181f" stroke="#33424f" strokeWidth="1" />
+              <line x1="141" y1="226" x2="159" y2="226" stroke="#2a3340" strokeWidth="0.8" />
+              <line x1="141" y1="232" x2="159" y2="232" stroke="#2a3340" strokeWidth="0.8" />
+              <g transform="translate(134 221) rotate(40)"><rect x="-0.9" y="-3.5" width="1.8" height="7" rx="0.9" fill="#f2a934" /><circle cx="0" cy="-3.5" r="2" fill="none" stroke="#f2a934" strokeWidth="1.2" /></g>
+              <text x="150" y="252" textAnchor="middle" className="lbl-m">Garage</text>
+            </g>
+          )}
 
           <WarehouseView lvl={g.whLevel} used={used} cap={cap} inv={g.inv} onClick={() => setSheet("wh")} />
 
@@ -538,22 +604,49 @@ function FluxTendu() {
             const home = HOME(i);
             const cargo = t.phase === "out" && t.good ? GC(t.good).c : null;
             const big = t.cap >= 24, bw = big ? 18 : 13;
+            const moving = t.phase === "out" || t.phase === "back";
             return (
               <g key={t.id} ref={(el) => { if (el) els.current.set(t.id, el); }} transform={"translate(" + home.x + " " + home.y + ") rotate(0)"}>
                 <g transform={"translate(" + (big ? -12 : -9) + " -5)"}>
+                  {moving && <ellipse cx={bw + 9} cy="5" rx="10" ry="4" fill="url(#headlight)" />}
                   <rect x="0" y="0" width={bw} height="10" rx="2" fill={cargo ? "#2c3744" : big ? "#334153" : "#3a4653"} stroke="#586777" strokeWidth=".6" />
                   {cargo && <rect x="2" y="2" width={bw - 4} height="6" rx="1" fill={cargo} />}
                   <rect x={bw} y="1.5" width="6" height="7" rx="1.5" fill="var(--amber)" />
                   <circle cx="4" cy="11" r="1.7" fill="#0d1117" />
                   <circle cx={bw} cy="11" r="1.7" fill="#0d1117" />
                   {big && <circle cx={bw - 6} cy="11" r="1.7" fill="#0d1117" />}
+                  {moving && <circle cx={bw + 5} cy="3" r="0.9" fill="#fff2cc" />}
+                  {moving && <circle cx={bw + 5} cy="7" r="0.9" fill="#fff2cc" />}
                 </g>
               </g>
             );
           })}
+
+          {breakdowns.map((b) => (
+            <g key={b.id} transform={"translate(" + b.x + " " + b.y + ")"}>
+              <circle cx="4" cy="-6" r="2" fill="#6b7480" opacity="0.5"><animate attributeName="cy" values="-6;-15" dur="1.6s" repeatCount="indefinite" /><animate attributeName="opacity" values="0.5;0" dur="1.6s" repeatCount="indefinite" /></circle>
+              <circle cx="5" cy="-6" r="2.6" fill="#6b7480" opacity="0.4"><animate attributeName="cy" values="-6;-17" dur="1.6s" begin="-0.8s" repeatCount="indefinite" /><animate attributeName="opacity" values="0.4;0" dur="1.6s" begin="-0.8s" repeatCount="indefinite" /></circle>
+              <g className="hazard">
+                <path d="M 0 -14 L 6.5 -3 L -6.5 -3 Z" fill="#f2a934" stroke="#0e1316" strokeWidth="0.8" strokeLinejoin="round" />
+                <rect x="-0.9" y="-11" width="1.8" height="4.5" rx="0.6" fill="#0e1316" />
+                <circle cx="0" cy="-4.6" r="0.9" fill="#0e1316" />
+              </g>
+            </g>
+          ))}
+
+          {breakdowns.map((b) => (
+            <g key={"tow" + b.id}>
+              <animateMotion path={"M 150 204 L " + b.x + " " + b.y} dur="2.2s" repeatCount="1" rotate="auto" fill="freeze" />
+              <rect x="-5" y="-2.5" width="10" height="5" rx="1.3" fill="#c9822f" />
+              <rect x="4.5" y="-2" width="4" height="4" rx="1" fill="#a8691f" />
+              <circle cx="-3" cy="0" r="1.4" fill="#0d1117" />
+              <circle cx="6.5" cy="0" r="1.4" fill="#0d1117" />
+              <circle cx="-1" cy="-3.4" r="1.1" fill="#f2d34a"><animate attributeName="opacity" values="1;0.25;1" dur="0.5s" repeatCount="indefinite" /></circle>
+            </g>
+          ))}
         </svg>
 
-        {toasts.map((t) => (<div key={t.id} className="toast" style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%" }}>{t.text}</div>))}
+        {toasts.map((t) => (<div key={t.id} className="toast" style={{ left: (t.x / 372) * 100 + "%", top: (t.y / 300) * 100 + "%", color: t.neg ? "var(--loss)" : "var(--gain)" }}>{t.text}</div>))}
 
         {sheet && <div className="fx-backdrop" onClick={() => setSheet(null)} />}
 
